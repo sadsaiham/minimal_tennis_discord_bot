@@ -3,6 +3,10 @@ from discord import app_commands
 import os
 from dotenv import load_dotenv
 import logging
+from flask import Flask, jsonify
+import threading
+import time
+import requests
 
 # Load environment variables from .env file
 load_dotenv()
@@ -41,6 +45,43 @@ def load_news():
 def save_news(text):
     with open("update.txt", "w", encoding="utf-8") as f:
         f.write(text)
+
+
+# --- Small webserver so hosts like Render detect an open port ---
+# This provides a health endpoint and binds to the PORT env var.
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    return "OK", 200
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify(status="ok"), 200
+
+
+def run_webserver():
+    port = int(os.environ.get("PORT", 8080))
+    # use_reloader=False so render / prod doesn't spawn duplicate processes
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+
+def run_heartbeat(interval_seconds: int = 300):
+    """Periodically ping the local health endpoint to keep the process active and
+    provide a lightweight workload every `interval_seconds` (default 300s = 5min).
+    """
+    port = int(os.environ.get("PORT", 8080))
+    url = f"http://127.0.0.1:{port}/healthz"
+    while True:
+        try:
+            logging.info("Heartbeat: pinging %s", url)
+            # Best-effort GET; timeout quickly if something is wrong
+            requests.get(url, timeout=5)
+        except Exception:
+            logging.exception("Heartbeat failed to reach local health endpoint")
+        time.sleep(interval_seconds)
 
 
 # Create the bot
@@ -110,4 +151,15 @@ async def set_news(interaction: discord.Interaction, text: str):
 
 
 # Run the bot
+# Start the webserver in a background thread so Render (or similar) detects an open port
+web_thread = threading.Thread(target=run_webserver, daemon=True)
+web_thread.start()
+logging.info("Started Flask webserver on port %s", os.environ.get("PORT", "8080"))
+
+# Start heartbeat thread to run every 5 minutes (300s)
+heartbeat_thread = threading.Thread(target=run_heartbeat, args=(300,), daemon=True)
+heartbeat_thread.start()
+logging.info("Started heartbeat thread (5 min interval)")
+
+# Finally start the Discord bot (blocking)
 bot.run(TOKEN)

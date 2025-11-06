@@ -1,1 +1,0 @@
-[b]Devlog: [i]6 November, 2025[/i][/b][br] [br][li]Made A Discord bot for the game so players can get updates and news about the game directly in the server.[br][li]Discord can now recognise the game when launched and display the current activity.
